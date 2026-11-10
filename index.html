@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Regulatory Document Control</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#000;background:#fff}
+main{max-width:1180px;margin:0 auto;padding:24px 20px 60px}
+h1{font-size:22px;margin:0 0 2px;letter-spacing:-.01em}
+.sub{color:#555;margin:0 0 20px}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.who{font-size:13px;color:#444;display:flex;align-items:center;gap:8px}
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}
+.stat{border:1px solid #000;padding:10px 12px;background:#fff;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.stat b{display:block;font-size:26px;line-height:1.1}
+.stat.on,.stat:hover{background:#000;color:#fff}
+.stat.alert b{text-decoration:underline}
+#banner{border:2px solid #000;padding:10px 14px;margin-bottom:16px}
+#banner ul{margin:6px 0 0;padding-left:18px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.bar input,.bar select{padding:7px 9px;border:1px solid #000;font:inherit;background:#fff}
+.bar input[type=search]{flex:1;min-width:180px}
+button{font:inherit;padding:7px 12px;border:1px solid #000;background:#fff;color:#000;cursor:pointer}
+button:hover{background:#eee}
+button:disabled{opacity:.5;cursor:not-allowed}
+button.pri{background:#000;color:#fff}button.pri:hover{background:#333}
+button.sm{padding:3px 8px;font-size:12px}
+:focus-visible{outline:3px solid #000;outline-offset:2px}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:820px}
+th,td{text-align:left;padding:9px 8px;border-bottom:1px solid #ccc;vertical-align:top}
+th{border-bottom:2px solid #000;font-weight:600;white-space:nowrap}
+td small{color:#555;display:block}
+.tag{display:inline-block;padding:1px 8px;border:1px solid #000;font-size:12px;white-space:nowrap}
+.tag.Overdue{background:#000;color:#fff;font-weight:700}
+.tag.Due{border-width:2px;font-weight:700}
+.tag.Valid{border-style:dashed;color:#444;border-color:#888}
+.act{white-space:nowrap}
+.empty{padding:28px;text-align:center;color:#555}
+dialog{border:2px solid #000;padding:0;width:min(560px,94vw)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+form{padding:18px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+form h2{grid-column:1/-1;margin:0;font-size:17px}
+label{display:flex;flex-direction:column;gap:3px;font-size:13px;font-weight:600}
+label input,label textarea{font:inherit;font-weight:400;padding:7px;border:1px solid #000}
+.full{grid-column:1/-1}
+.btns{grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end}
+.hist{grid-column:1/-1;font-size:12px;color:#444;border-top:1px solid #ccc;padding-top:8px}
+#login{max-width:420px;margin:12vh auto 0;padding:0 20px}
+#login form{display:flex;flex-direction:column;padding:0;gap:12px;margin-top:16px}
+#lmsg{min-height:1.4em;font-size:13px}
+.note{color:#555;font-size:12px}
+@media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}form{grid-template-columns:1fr}#login form{display:flex}}
+</style></head><body>
+
+<!-- ============ SIGN-IN SCREEN ============ -->
+<section id="login" hidden>
+ <h1>Regulatory Document Control</h1>
+ <p class="sub">Sign in with your email. We'll send you a one-time link.</p>
+ <form id="lf">
+  <label>Email address<input type="email" id="lemail" required autocomplete="email"></label>
+  <button class="pri" type="submit" id="lbtn">Email me a sign-in link</button>
+  <div id="lmsg" role="status"></div>
+ </form>
+</section>
+
+<!-- ============ APP ============ -->
+<main id="app" hidden>
+<div class="top">
+ <div><h1>Regulatory Document Control</h1>
+ <p class="sub">Register of regulatory documents, with receipt dates, renewal due dates and reminders.</p></div>
+ <div class="who"><span id="who"></span><button class="sm" id="so">Sign out</button></div>
+</div>
+<div class="stats" id="stats"></div>
+<div id="banner" hidden></div>
+<div class="bar">
+ <input type="search" id="q" placeholder="Search title, reference, authority, owner" aria-label="Search">
+ <select id="fs" aria-label="Filter by status">
+  <option value="all">All documents</option><option value="over">Overdue</option>
+  <option value="30">Due within 30 days</option><option value="60">Due within 60 days</option>
+  <option value="90">Due within 90 days</option><option value="valid">Valid</option></select>
+ <select id="ft" aria-label="Filter by type"><option value="">All types</option></select>
+ <button class="pri" id="add">Add document</button>
+</div>
+<div class="bar">
+ <button id="csv">Export CSV</button><button id="ics">Export to calendar (.ics)</button>
+ <button id="bk">Back up data</button><button id="rs">Import backup</button>
+ <button id="nt">Enable notifications</button><button id="em">Email reminder</button>
+ <input type="file" id="rf" accept=".json" hidden>
+</div>
+<div class="tw"><table><thead><tr><th>Document</th><th>Type</th><th>Received</th><th>Renewal due</th><th>Days left</th><th>Status</th><th></th></tr></thead><tbody id="tb"></tbody></table></div>
+
+<dialog id="dm"><form id="fm" method="dialog">
+ <h2 id="dt">Add document</h2>
+ <label class="full">Document title<input id="f_title" required></label>
+ <label>Type<input id="f_type" list="types" required></label>
+ <datalist id="types"><option>Licence</option><option>Certificate</option><option>Permit</option><option>Registration</option><option>Authorisation</option><option>Policy or SOP</option></datalist>
+ <label>Reference number<input id="f_ref"></label>
+ <label>Issuing authority<input id="f_auth"></label>
+ <label>Responsible person<input id="f_owner"></label>
+ <label>Date received<input type="date" id="f_rec" required></label>
+ <label>Renewal due date<input type="date" id="f_due" required></label>
+ <label>Remind me (days before due)<input type="number" id="f_lead" min="1" value="60" required></label>
+ <label class="full">Email these people when due (comma-separated)<input id="f_emails" placeholder="boss@company.com, you@company.com"></label>
+ <label>File location or link<input id="f_loc"></label>
+ <label class="full">Notes<textarea id="f_notes" rows="2"></textarea></label>
+ <div class="hist" id="hist" hidden></div>
+ <div class="btns"><button type="button" id="cx">Cancel</button><button class="pri" type="submit">Save document</button></div>
+</form></dialog>
+
+<dialog id="rd"><form id="rf2" method="dialog">
+ <h2 id="rt">Renew document</h2>
+ <label>New date received<input type="date" id="r_rec" required></label>
+ <label>New renewal due date<input type="date" id="r_due" required></label>
+ <div class="btns"><button type="button" id="rcx">Cancel</button><button class="pri" type="submit">Save renewal</button></div>
+</form></dialog>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* ===================== CONFIGURE THESE TWO VALUES =====================
+   Supabase dashboard > Project Settings > API
+   Use the anon / publishable key ONLY. Never put the service_role key here. */
+const SUPABASE_URL = 'https://pqcyjperjandxemlpwif.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_6Jn8M2_nUiSKwe14idNc-Q_aeuO7XZa';
+/* ====================================================================== */
+
+const configured = !SUPABASE_URL.includes('YOUR-PROJECT') && !SUPABASE_ANON_KEY.includes('YOUR-ANON');
+const sb = configured ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+let D=[],editId=null,renId=null,flt='all',user=null;
+const OLD_KEY='regdocs_v1'; // the previous localStorage key, used for one-time import
+
+const $=s=>document.querySelector(s);
+const iso=d=>{const z=new Date(d.getTime()-d.getTimezoneOffset()*6e4);return z.toISOString().slice(0,10)};
+const midnight=()=>{const d=new Date();d.setHours(0,0,0,0);return d};
+const days=x=>Math.round((new Date(x+'T00:00:00')-midnight())/864e5);
+const status=d=>{const n=days(d.due);return n<0?'Overdue':n<=d.lead?'Due soon':'Valid'};
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt=x=>x?new Date(x+'T00:00:00').toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'}):'';
+const within=(d,n)=>{const k=days(d.due);return k>=0&&k<=n};
+
+/* ---------- Supabase data layer ---------- */
+// The app uses short field names; the table uses descriptive column names.
+const fromRow=r=>({id:r.id,title:r.title,type:r.type,ref:r.reference||'',auth:r.authority||'',
+ owner:r.owner||'',rec:r.received,due:r.due,lead:r.lead_days,loc:r.location||'',emails:r.notify_emails||'',notes:r.notes||'',history:r.history||[]});
+const toRow=d=>({title:d.title,type:d.type,reference:d.ref||null,authority:d.auth||null,owner:d.owner||null,
+ received:d.rec,due:d.due,lead_days:+d.lead||60,location:d.loc||null,notify_emails:d.emails||null,notes:d.notes||null,history:d.history||[]});
+
+async function load(){
+ const {data,error}=await sb.from('documents').select('*').order('due',{ascending:true});
+ if(error){alert('Could not load documents: '+error.message);return}
+ D=data.map(fromRow);render();
+ if(!D.length)offerLocalImport();
+}
+async function upsertDoc(d){
+ const q=d.id?sb.from('documents').update(toRow(d)).eq('id',d.id):sb.from('documents').insert(toRow(d));
+ const {error}=await q;
+ if(error){alert('Could not save: '+error.message);return false}
+ await load();return true;
+}
+async function removeDoc(id){
+ const {error}=await sb.from('documents').delete().eq('id',id);
+ if(error){alert('Could not delete: '+error.message);return}
+ await load();
+}
+async function insertMany(list){
+ const ok=list.filter(x=>x&&x.title&&x.type&&x.rec&&x.due);
+ if(!ok.length)return alert('No valid documents found in that file.');
+ const {error}=await sb.from('documents').insert(ok.map(toRow));
+ if(error)return alert('Import failed: '+error.message);
+ alert(ok.length+' document(s) imported.');await load();
+}
+// One-time helper: if this browser still holds data from the old localStorage version, offer to move it.
+function offerLocalImport(){
+ let old=[];try{old=JSON.parse(localStorage.getItem(OLD_KEY)||'[]')}catch(e){}
+ if(!Array.isArray(old)||!old.length)return;
+ if(confirm(`Found ${old.length} document(s) saved in this browser from the earlier version. Import them into your online register?`)){
+  insertMany(old).then(()=>{try{localStorage.removeItem(OLD_KEY)}catch(e){}});
+ }
+}
+
+/* ---------- Authentication ---------- */
+function setSession(s){
+ const prev=user;user=s?s.user:null;
+ $('#login').hidden=!!user;$('#app').hidden=!user;
+ if(user){$('#who').textContent=user.email||'';if(!prev||prev.id!==user.id)load()}
+ else{D=[];}
+}
+async function initAuth(){
+ if(!configured){
+  $('#login').hidden=false;$('#lf').hidden=true;
+  $('#login .sub').textContent='Setup needed: open this file and replace SUPABASE_URL and SUPABASE_ANON_KEY near the top of the script.';
+  return;
+ }
+ const {data:{session}}=await sb.auth.getSession();
+ setSession(session);
+ sb.auth.onAuthStateChange((_e,s)=>setSession(s));
+}
+$('#lf').onsubmit=async e=>{
+ e.preventDefault();
+ const btn=$('#lbtn'),msg=$('#lmsg');btn.disabled=true;msg.textContent='Sending...';
+ const {error}=await sb.auth.signInWithOtp({email:$('#lemail').value.trim(),options:{emailRedirectTo:location.origin+location.pathname}});
+ btn.disabled=false;
+ msg.textContent=error?'Could not send the link: '+error.message:'Check your email and open the link to sign in.';
+};
+$('#so').onclick=async()=>{await sb.auth.signOut()};
+
+/* ---------- Rendering ---------- */
+function visible(){
+ const q=$('#q').value.toLowerCase(),t=$('#ft').value;
+ return D.filter(d=>{
+  if(q&&![d.title,d.ref,d.auth,d.owner,d.type].join(' ').toLowerCase().includes(q))return false;
+  if(t&&d.type!==t)return false;
+  if(flt==='over')return days(d.due)<0;
+  if(flt==='valid')return status(d)==='Valid';
+  if(flt!=='all')return within(d,+flt);
+  return true}).sort((a,b)=>a.due.localeCompare(b.due));
+}
+function render(){
+ const c=[['all','Total documents',D.length],['over','Overdue',D.filter(d=>days(d.due)<0).length],
+  ['30','Due in 30 days',D.filter(d=>within(d,30)).length],['60','Due in 60 days',D.filter(d=>within(d,60)).length],['90','Due in 90 days',D.filter(d=>within(d,90)).length]];
+ $('#stats').innerHTML=c.map(x=>`<button class="stat ${flt===x[0]?'on':''} ${x[0]==='over'&&x[2]?'alert':''}" data-f="${x[0]}"><b>${x[2]}</b>${x[1]}</button>`).join('');
+ $('#fs').value=flt;
+ const types=[...new Set(D.map(d=>d.type))].sort(),cur=$('#ft').value;
+ $('#ft').innerHTML='<option value="">All types</option>'+types.map(t=>`<option ${t===cur?'selected':''}>${esc(t)}</option>`).join('');
+ const need=D.filter(d=>status(d)!=='Valid').sort((a,b)=>a.due.localeCompare(b.due));
+ const b=$('#banner');b.hidden=!need.length;
+ if(need.length)b.innerHTML=`<b>${need.length} document${need.length>1?'s need':' needs'} attention</b><ul>`+need.map(d=>{const n=days(d.due);return `<li>${esc(d.title)}: ${n<0?`overdue by ${-n} day${n<-1?'s':''}`:n===0?'due today':`due in ${n} day${n>1?'s':''}`} (${fmt(d.due)})</li>`}).join('')+'</ul>';
+ const v=visible();
+ $('#tb').innerHTML=v.length?v.map(d=>{const n=days(d.due),s=status(d);
+  return `<tr><td><b>${esc(d.title)}</b><small>${[d.ref,d.auth,d.owner].filter(Boolean).map(esc).join(' | ')}</small>${d.loc?`<small>File: ${esc(d.loc)}</small>`:''}</td>
+  <td>${esc(d.type)}</td><td>${fmt(d.rec)}</td><td>${fmt(d.due)}</td><td>${n<0?(-n)+' overdue':n}</td>
+  <td><span class="tag ${s.split(' ')[0]}">${s}</span></td>
+  <td class="act"><button class="sm" data-a="ren" data-i="${d.id}">Renew</button> <button class="sm" data-a="edit" data-i="${d.id}">Edit</button> <button class="sm" data-a="del" data-i="${d.id}">Delete</button></td></tr>`}).join('')
+  :`<tr><td colspan="7" class="empty">${D.length?'No documents match this filter.':'No documents yet. Select "Add document" to register your first one.'}</td></tr>`;
+}
+
+/* ---------- Add / edit / renew / delete ---------- */
+const F=['title','type','ref','auth','owner','rec','due','lead','emails','loc','notes'];
+function openForm(id){
+ editId=id;const d=D.find(x=>x.id===id)||{lead:60,rec:iso(new Date())};
+ $('#dt').textContent=id?'Edit document':'Add document';
+ F.forEach(k=>$('#f_'+k).value=d[k]==null?'':d[k]);
+ const h=$('#hist');h.hidden=!(d.history&&d.history.length);
+ if(!h.hidden)h.innerHTML='<b>Renewal history</b><br>'+d.history.map(x=>`Received ${fmt(x.rec)}, was due ${fmt(x.due)}, renewed ${fmt(x.on)}`).join('<br>');
+ $('#dm').showModal();
+}
+$('#fm').onsubmit=e=>{
+ const o={};F.forEach(k=>o[k]=$('#f_'+k).value.trim());o.lead=+o.lead||60;
+ if(o.due<o.rec&&!confirm('The due date is before the received date. Save anyway?')){e.preventDefault();return}
+ const rec=editId?{...D.find(x=>x.id===editId),...o}:{...o,history:[]};
+ upsertDoc(rec);
+};
+$('#add').onclick=()=>openForm(null);$('#cx').onclick=()=>$('#dm').close();
+$('#rcx').onclick=()=>$('#rd').close();
+$('#tb').onclick=e=>{
+ const b=e.target.closest('button');if(!b)return;const id=b.dataset.i,d=D.find(x=>x.id===id);
+ if(b.dataset.a==='edit')openForm(id);
+ if(b.dataset.a==='del'&&confirm(`Delete "${d.title}" and its history?`))removeDoc(id);
+ if(b.dataset.a==='ren'){renId=id;$('#rt').textContent='Renew: '+d.title;$('#r_rec').value=iso(new Date());$('#r_due').value='';$('#rd').showModal()}
+};
+$('#rf2').onsubmit=()=>{
+ const d={...D.find(x=>x.id===renId)};
+ d.history=[...(d.history||[]),{rec:d.rec,due:d.due,on:iso(new Date())}];
+ d.rec=$('#r_rec').value;d.due=$('#r_due').value;
+ upsertDoc(d);
+};
+$('#stats').onclick=e=>{const b=e.target.closest('.stat');if(b){flt=b.dataset.f;render()}};
+$('#fs').onchange=e=>{flt=e.target.value;render()};
+$('#q').oninput=render;$('#ft').onchange=render;
+
+/* ---------- Exports, backup, notifications ---------- */
+function dl(name,text,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500)}
+$('#csv').onclick=()=>{
+ const h=['Title','Type','Reference','Authority','Owner','Received','Renewal due','Remind days before','Status','File location','Notes'];
+ const q=s=>'"'+String(s==null?'':s).replace(/"/g,'""')+'"';
+ dl('regulatory_documents.csv',[h.map(q).join(',')].concat(D.map(d=>[d.title,d.type,d.ref,d.auth,d.owner,d.rec,d.due,d.lead,status(d),d.loc,d.notes].map(q).join(','))).join('\r\n'),'text/csv');
+};
+$('#ics').onclick=()=>{
+ if(!D.length)return alert('Add a document first.');
+ const p=s=>s.replace(/-/g,''),nx=s=>{const d=new Date(s+'T00:00:00');d.setDate(d.getDate()+1);return p(iso(d))};
+ const t=s=>String(s||'').replace(/[\\;,]/g,m=>'\\'+m).replace(/\n/g,'\\n');
+ const ev=D.map(d=>['BEGIN:VEVENT','UID:'+d.id+'@regdocs','DTSTAMP:'+new Date().toISOString().replace(/[-:]|\.\d+/g,''),
+  'DTSTART;VALUE=DATE:'+p(d.due),'DTEND;VALUE=DATE:'+nx(d.due),'SUMMARY:'+t('Renewal due: '+d.title),
+  'DESCRIPTION:'+t([d.type,d.ref,d.auth].filter(Boolean).join(' | ')),
+  'BEGIN:VALARM','TRIGGER:-P'+d.lead+'D','ACTION:DISPLAY','DESCRIPTION:'+t('Renewal due soon: '+d.title),'END:VALARM','END:VEVENT'].join('\r\n'));
+ dl('document_renewals.ics',['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//RegDocs//EN'].concat(ev,'END:VCALENDAR').join('\r\n'),'text/calendar');
+};
+$('#bk').onclick=()=>dl('document_control_backup_'+iso(new Date())+'.json',JSON.stringify(D,null,1),'application/json');
+$('#rs').onclick=()=>$('#rf').click();
+// Import ADDS the documents in the file to your register (it never deletes existing ones).
+// It also accepts backups made by the old localStorage version.
+$('#rf').onchange=e=>{
+ const f=e.target.files[0];if(!f)return;const r=new FileReader();
+ r.onload=()=>{let x;try{x=JSON.parse(r.result);if(!Array.isArray(x))throw 0}catch(_){return alert('That file is not a valid backup.')}
+  if(confirm(`Add ${x.length} document(s) from this backup to your register?`))insertMany(x)};
+ r.readAsText(f);e.target.value='';
+};
+// Opens the user's email program with a ready-written reminder (they press Send).
+$('#em').onclick=()=>{
+ const need=D.filter(d=>status(d)!=='Valid').sort((a,b)=>a.due.localeCompare(b.due));
+ if(!need.length)return alert('No documents are due or overdue right now.');
+ const to=[...new Set(need.flatMap(d=>(d.emails||'').split(',').map(x=>x.trim()).filter(Boolean)))];
+ const lines=need.map(d=>{const n=days(d.due);
+  return '- '+d.title+(d.ref?' ('+d.ref+')':'')+': '+(n<0?'OVERDUE by '+(-n)+' day(s)':n===0?'due TODAY':'due in '+n+' day(s)')+' (renewal date '+fmt(d.due)+')'});
+ let body='The following regulatory documents need attention:\n\n'+lines.join('\n')+'\n\nPlease arrange renewal.';
+ if(body.length>1500)body=body.slice(0,1500)+'\n...(list shortened)';
+ location.href='mailto:'+to.join(',')+'?subject='+encodeURIComponent(need.length+' regulatory document(s) need attention')+'&body='+encodeURIComponent(body);
+};
+function notify(){
+ if(!('Notification' in window)||Notification.permission!=='granted')return;
+ const n=D.filter(d=>status(d)!=='Valid').length;
+ if(n)new Notification('Regulatory documents',{body:n+' document(s) are due or overdue for renewal.'});
+}
+$('#nt').onclick=()=>{
+ if(!('Notification' in window))return alert('This browser does not support notifications.');
+ Notification.requestPermission().then(p=>{if(p==='granted')notify();else alert('Notifications are blocked. Allow them in your browser settings.')});
+};
+
+initAuth();
+</script></body></html>

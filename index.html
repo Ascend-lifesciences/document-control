@@ -55,10 +55,11 @@ label input,label textarea{font:inherit;font-weight:400;padding:7px;border:1px s
 <!-- ============ SIGN-IN SCREEN ============ -->
 <section id="login" hidden>
  <h1>Regulatory Document Control</h1>
- <p class="sub">Sign in with your email. We'll send you a one-time link.</p>
+ <p class="sub">Sign in with your email and password.</p>
  <form id="lf">
   <label>Email address<input type="email" id="lemail" required autocomplete="email"></label>
-  <button class="pri" type="submit" id="lbtn">Email me a sign-in link</button>
+  <label>Password<input type="password" id="lpass" required autocomplete="current-password"></label>
+  <button class="pri" type="submit" id="lbtn">Sign in</button>
   <div id="lmsg" role="status"></div>
  </form>
 </section>
@@ -68,7 +69,7 @@ label input,label textarea{font:inherit;font-weight:400;padding:7px;border:1px s
 <div class="top">
  <div><h1>Regulatory Document Control</h1>
  <p class="sub">Register of regulatory documents, with receipt dates, renewal due dates and reminders.</p></div>
- <div class="who"><span id="who"></span><button class="sm" id="so">Sign out</button></div>
+ <div class="who"><span id="who"></span><button class="sm" id="cp">Change password</button><button class="sm" id="so">Sign out</button></div>
 </div>
 <div class="stats" id="stats"></div>
 <div id="banner" hidden></div>
@@ -198,10 +199,18 @@ async function initAuth(){
 }
 $('#lf').onsubmit=async e=>{
  e.preventDefault();
- const btn=$('#lbtn'),msg=$('#lmsg');btn.disabled=true;msg.textContent='Sending...';
- const {error}=await sb.auth.signInWithOtp({email:$('#lemail').value.trim(),options:{emailRedirectTo:location.origin+location.pathname}});
+ const btn=$('#lbtn'),msg=$('#lmsg');btn.disabled=true;msg.textContent='Signing in...';
+ const {error}=await sb.auth.signInWithPassword({email:$('#lemail').value.trim(),password:$('#lpass').value});
  btn.disabled=false;
- msg.textContent=error?'Could not send the link: '+error.message:'Check your email and open the link to sign in.';
+ if(error){msg.textContent='Could not sign in: '+error.message}
+ else{msg.textContent='';$('#lpass').value=''}
+};
+$('#cp').onclick=async()=>{
+ const pw=prompt('Enter a new password (at least 8 characters):');
+ if(pw===null)return;
+ if(pw.length<8)return alert('The password must be at least 8 characters.');
+ const {error}=await sb.auth.updateUser({password:pw});
+ alert(error?'Could not change password: '+error.message:'Password changed.');
 };
 $('#so').onclick=async()=>{await sb.auth.signOut()};
 

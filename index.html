@@ -45,6 +45,10 @@ label input,label textarea{font:inherit;font-weight:400;padding:7px;border:1px s
 .full{grid-column:1/-1}
 .btns{grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end}
 .hist{grid-column:1/-1;font-size:12px;color:#444;border-top:1px solid #ccc;padding-top:8px}
+.tabs{display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid #000}
+.tabs button{border:1px solid #000;border-bottom:0;margin-bottom:-2px;padding:9px 16px;font-weight:600}
+.tabs button.on{background:#000;color:#fff}
+td a{color:inherit;font-weight:600}
 table.ht{min-width:0}.ht th,.ht td{padding:6px 8px;font-size:13px}
 #login{max-width:420px;margin:12vh auto 0;padding:0 20px}
 #login form{display:flex;flex-direction:column;padding:0;gap:12px;margin-top:16px}
@@ -72,6 +76,7 @@ table.ht{min-width:0}.ht th,.ht td{padding:6px 8px;font-size:13px}
  <p class="sub">Register of regulatory documents, with receipt dates, renewal due dates and reminders.</p></div>
  <div class="who"><span id="who"></span><button class="sm" id="cp">Change password</button><button class="sm" id="so">Sign out</button></div>
 </div>
+<div class="tabs" id="tabs" role="tablist"><button role="tab" data-t="cur">Current documents</button><button role="tab" data-t="all">All documents</button></div>
 <div class="stats" id="stats"></div>
 <div id="banner" hidden></div>
 <div class="bar">
@@ -80,6 +85,7 @@ table.ht{min-width:0}.ht th,.ht td{padding:6px 8px;font-size:13px}
   <option value="all">All documents</option><option value="over">Overdue</option>
   <option value="30">Due within 30 days</option><option value="60">Due within 60 days</option>
   <option value="90">Due within 90 days</option><option value="valid">Valid</option></select>
+ <select id="fv" aria-label="Filter by version" hidden><option value="all">All versions</option><option value="cur">Current only</option><option value="prev">Previous only</option></select>
  <select id="ft" aria-label="Filter by type"><option value="">All types</option></select>
  <button class="pri" id="add">Add document</button>
 </div>
@@ -89,7 +95,7 @@ table.ht{min-width:0}.ht th,.ht td{padding:6px 8px;font-size:13px}
  <button id="nt">Enable notifications</button><button id="em">Email reminder</button>
  <input type="file" id="rf" accept=".json" hidden>
 </div>
-<div class="tw"><table><thead><tr><th>Document</th><th>Type</th><th>Received</th><th>Renewal due</th><th>Days left</th><th>Status</th><th></th></tr></thead><tbody id="tb"></tbody></table></div>
+<div class="tw"><table><thead id="th"></thead><tbody id="tb"></tbody></table></div>
 
 <dialog id="dm"><form id="fm" method="dialog">
  <h2 id="dt">Add document</h2>
@@ -110,8 +116,11 @@ table.ht{min-width:0}.ht th,.ht td{padding:6px 8px;font-size:13px}
 
 <dialog id="rd"><form id="rf2" method="dialog">
  <h2 id="rt">Renew document</h2>
+ <p class="full note">Saving adds a new version. The old one moves into the history.</p>
+ <label class="full">Name of the new version<input id="r_title" required></label>
  <label>New date received<input type="date" id="r_rec" required></label>
  <label>New renewal due date<input type="date" id="r_due" required></label>
+ <label class="full">File location or link for the new version<input id="r_loc"></label>
  <div class="btns"><button type="button" id="rcx">Cancel</button><button class="pri" type="submit">Save renewal</button></div>
 </form></dialog>
 
@@ -134,7 +143,7 @@ const SUPABASE_ANON_KEY = 'sb_publishable_6Jn8M2_nUiSKwe14idNc-Q_aeuO7XZa';
 const configured = !SUPABASE_URL.includes('YOUR-PROJECT') && !SUPABASE_ANON_KEY.includes('YOUR-ANON');
 const sb = configured ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
-let D=[],editId=null,renId=null,flt='all',user=null;
+let D=[],editId=null,renId=null,flt='all',user=null,tab='cur';
 const OLD_KEY='regdocs_v1'; // the previous localStorage key, used for one-time import
 
 const $=s=>document.querySelector(s);
@@ -144,6 +153,8 @@ const days=x=>Math.round((new Date(x+'T00:00:00')-midnight())/864e5);
 const status=d=>{const n=days(d.due);return n<0?'Overdue':n<=d.lead?'Due soon':'Valid'};
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmt=x=>x?new Date(x+'T00:00:00').toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'}):'';
+const linkify=u=>/^https?:\/\//i.test(u)?`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">Open link</a>`:esc(u);
+const linkRow=d=>d.loc?`<small>File: ${linkify(d.loc)}</small>`:'';
 const within=(d,n)=>{const k=days(d.due);return k>=0&&k<=n};
 
 /* ---------- Supabase data layer ---------- */
@@ -153,9 +164,18 @@ const fromRow=r=>({id:r.id,title:r.title,type:r.type,ref:r.reference||'',auth:r.
 const toRow=d=>({title:d.title,type:d.type,reference:d.ref||null,authority:d.auth||null,owner:d.owner||null,
  received:d.rec,due:d.due,lead_days:+d.lead||60,location:d.loc||null,notify_emails:d.emails||null,notes:d.notes||null,history:d.history||[]});
 
+// Older renewals used to be stored inside a document. Turn them into normal records so they can be edited and deleted.
+async function convertOldHistory(rows){
+ const withH=rows.filter(r=>(r.history||[]).length);if(!withH.length)return false;
+ const ins=[];withH.forEach(r=>r.history.forEach(x=>ins.push({title:r.title,type:r.type,reference:r.reference,authority:r.authority,owner:r.owner,received:x.rec,due:x.due,lead_days:r.lead_days,location:null,notify_emails:null,notes:r.notes,history:[]})));
+ const {error}=await sb.from('documents').insert(ins);if(error)return false;
+ for(const r of withH)await sb.from('documents').update({history:[]}).eq('id',r.id);
+ return true;
+}
 async function load(){
  const {data,error}=await sb.from('documents').select('*').order('due',{ascending:true});
  if(error){alert('Could not load documents: '+error.message);return}
+ if(await convertOldHistory(data))return load();
  D=data.map(fromRow);render();
  if(!D.length)offerLocalImport();
 }
@@ -231,7 +251,7 @@ function groups(){
 }
 const C=()=>groups().map(g=>g.cur);
 const grpOf=id=>groups().find(g=>g.cur.id===id);
-function histCount(d){const g=grpOf(d.id);return g?g.older.reduce((n,o)=>n+1+(o.history||[]).length,(d.history||[]).length):0}
+function histCount(d){const g=grpOf(d.id);return g?g.older.length:0}
 function hay(d){const g=grpOf(d.id);return [d].concat(g?g.older:[]).map(x=>[x.title,x.ref,x.auth,x.owner,x.type].join(' ')).join(' ').toLowerCase()}
 
 /* ---------- Rendering ---------- */
@@ -256,13 +276,36 @@ function render(){
  const need=CU.filter(d=>status(d)!=='Valid').sort((a,b)=>a.due.localeCompare(b.due));
  const b=$('#banner');b.hidden=!need.length;
  if(need.length)b.innerHTML=`<b>${need.length} document${need.length>1?'s need':' needs'} attention</b><ul>`+need.map(d=>{const n=days(d.due);return `<li>${esc(d.title)}: ${n<0?`overdue by ${-n} day${n<-1?'s':''}`:n===0?'due today':`due in ${n} day${n>1?'s':''}`} (${fmt(d.due)})</li>`}).join('')+'</ul>';
+ $('#stats').hidden=tab==='all';$('#fs').hidden=tab==='all';$('#fv').hidden=tab!=='all';
+ document.querySelectorAll('#tabs button').forEach(b=>{const on=b.dataset.t===tab;b.classList.toggle('on',on);b.setAttribute('aria-selected',on)});
+ if(tab==='all'){$('#banner').hidden=true;return renderAll(CU)}
+ $('#th').innerHTML='<tr><th>Document</th><th>Type</th><th>Received</th><th>Renewal due</th><th>Days left</th><th>Status</th><th></th></tr>';
  const v=visible();
  $('#tb').innerHTML=v.length?v.map(d=>{const n=days(d.due),s=status(d),hc=histCount(d);
-  return `<tr><td><b>${esc(d.title)}</b><small>${[d.ref,d.auth,d.owner].filter(Boolean).map(esc).join(' | ')}</small>${d.loc?`<small>File: ${esc(d.loc)}</small>`:''}${hc?`<small>${hc} earlier version${hc>1?'s':''} in history</small>`:''}</td>
+  return `<tr><td><b>${esc(d.title)}</b><small>${[d.ref,d.auth,d.owner].filter(Boolean).map(esc).join(' | ')}</small>${linkRow(d)}${hc?`<small>${hc} earlier version${hc>1?'s':''} in history</small>`:''}</td>
   <td>${esc(d.type)}</td><td>${fmt(d.rec)}</td><td>${fmt(d.due)}</td><td>${n<0?(-n)+' overdue':n}</td>
   <td><span class="tag ${s.split(' ')[0]}">${s}</span></td>
   <td class="act">${hc?`<button class="sm" data-a="hist" data-i="${d.id}">History</button> `:''}<button class="sm" data-a="ren" data-i="${d.id}">Renew</button> <button class="sm" data-a="edit" data-i="${d.id}">Edit</button> <button class="sm" data-a="del" data-i="${d.id}">Delete</button></td></tr>`}).join('')
   :`<tr><td colspan="7" class="empty">${CU.length?'No documents match this filter.':'No documents yet. Select "Add document" to register your first one.'}</td></tr>`;
+}
+
+function renderAll(CU){
+ $('#th').innerHTML='<tr><th>Document</th><th>Type</th><th>Received</th><th>Renewal due</th><th>Version</th><th></th></tr>';
+ const q=$('#q').value.toLowerCase(),t=$('#ft').value,fv=$('#fv').value,cid=new Set(CU.map(x=>x.id));
+ const A=D.filter(d=>(!q||[d.title,d.ref,d.auth,d.owner,d.type].join(' ').toLowerCase().includes(q))&&(!t||d.type===t)&&(fv==='all'||(fv==='cur')===cid.has(d.id)))
+  .sort((a,b)=>(gkey(a.title)||a.title).localeCompare(gkey(b.title)||b.title)||b.due.localeCompare(a.due));
+ $('#tb').innerHTML=A.length?A.map(d=>{const c=cid.has(d.id);
+  return `<tr><td><b>${esc(d.title)}</b><small>${[d.ref,d.auth,d.owner].filter(Boolean).map(esc).join(' | ')}</small>${linkRow(d)}</td>
+  <td>${esc(d.type)}</td><td>${fmt(d.rec)}</td><td>${fmt(d.due)}</td>
+  <td><span class="tag ${c?'Due':'Valid'}">${c?'Current':'Previous'}</span></td>
+  <td class="act"><button class="sm" data-a="rename" data-i="${d.id}">Rename</button> <button class="sm" data-a="edit" data-i="${d.id}">Edit</button> <button class="sm" data-a="del" data-i="${d.id}">Delete</button></td></tr>`}).join('')
+  :`<tr><td colspan="6" class="empty">${D.length?'No documents match this filter.':'No documents yet.'}</td></tr>`;
+}
+async function renameDoc(id){
+ const d=D.find(x=>x.id===id);if(!d)return;
+ const t=prompt('New name for this document:',d.title);if(t===null)return;
+ const n=t.trim();if(!n)return alert('The name cannot be empty.');
+ if(n!==d.title)await upsertDoc({...d,title:n});
 }
 
 /* ---------- Add / edit / renew / delete ---------- */
@@ -270,13 +313,8 @@ const F=['title','type','ref','auth','owner','rec','due','lead','emails','loc','
 function openHistory(id){
  const g=grpOf(id);if(!g)return;const d=g.cur;
  $('#ht').textContent='History: '+d.title;
- const e=[];
- (d.history||[]).forEach(x=>e.push({t:d.title,rec:x.rec,due:x.due,on:x.on}));
- g.older.forEach(o=>{e.push({t:o.title,rec:o.rec,due:o.due,on:''});(o.history||[]).forEach(x=>e.push({t:o.title,rec:x.rec,due:x.due,on:x.on}))});
- e.sort((a,b)=>b.due.localeCompare(a.due));
- const rows=`<tr><td><b>${esc(d.title)}</b> (current)</td><td>${fmt(d.rec)}</td><td>${fmt(d.due)}</td><td>-</td></tr>`+
-  e.map(x=>`<tr><td>${esc(x.t)}</td><td>${fmt(x.rec)}</td><td>${fmt(x.due)}</td><td>${x.on?fmt(x.on):'-'}</td></tr>`).join('');
- $('#hb').innerHTML=`<table class="ht"><thead><tr><th>Document</th><th>Received</th><th>Expiry date</th><th>Renewed on</th></tr></thead><tbody>${rows}</tbody></table>`;
+ const row=(x,tag)=>`<tr><td>${tag?'<b>'+esc(x.title)+'</b> (current)':esc(x.title)}</td><td>${fmt(x.rec)}</td><td>${fmt(x.due)}</td><td>${x.loc?linkify(x.loc):'-'}</td></tr>`;
+ $('#hb').innerHTML=`<table class="ht"><thead><tr><th>Document</th><th>Received</th><th>Expiry date</th><th>File</th></tr></thead><tbody>${row(d,1)}${g.older.map(o=>row(o,0)).join('')}</tbody></table><p class="note">To rename, edit or delete a version, use the All documents tab.</p>`;
  $('#hd').showModal();
 }
 function openForm(id){
@@ -296,16 +334,17 @@ $('#rcx').onclick=()=>$('#rd').close();
 $('#tb').onclick=e=>{
  const b=e.target.closest('button');if(!b)return;const id=b.dataset.i,d=D.find(x=>x.id===id);
  if(b.dataset.a==='edit')openForm(id);
+ if(b.dataset.a==='rename')renameDoc(id);
  if(b.dataset.a==='hist')openHistory(id);
- if(b.dataset.a==='del'&&confirm(`Delete "${d.title}" and its history?`))removeDoc(id);
- if(b.dataset.a==='ren'){renId=id;$('#rt').textContent='Renew: '+d.title;$('#r_rec').value=iso(new Date());$('#r_due').value='';$('#rd').showModal()}
+ if(b.dataset.a==='del'&&confirm(`Delete "${d.title}" (${fmt(d.rec)} to ${fmt(d.due)})? This cannot be undone.`))removeDoc(id);
+ if(b.dataset.a==='ren'){renId=id;$('#rt').textContent='Renew: '+d.title;$('#r_title').value=d.title;$('#r_loc').value='';$('#r_rec').value=iso(new Date());$('#r_due').value='';$('#rd').showModal()}
 };
 $('#rf2').onsubmit=()=>{
- const d={...D.find(x=>x.id===renId)};
- d.history=[...(d.history||[]),{rec:d.rec,due:d.due,on:iso(new Date())}];
- d.rec=$('#r_rec').value;d.due=$('#r_due').value;
- upsertDoc(d);
+ const d=D.find(x=>x.id===renId);
+ upsertDoc({...d,id:undefined,title:$('#r_title').value.trim()||d.title,rec:$('#r_rec').value,due:$('#r_due').value,loc:$('#r_loc').value.trim(),history:[]});
 };
+$('#tabs').onclick=e=>{const b=e.target.closest('button');if(b){tab=b.dataset.t;render()}};
+$('#fv').onchange=render;
 $('#stats').onclick=e=>{const b=e.target.closest('.stat');if(b){flt=b.dataset.f;render()}};
 $('#fs').onchange=e=>{flt=e.target.value;render()};
 $('#q').oninput=render;$('#ft').onchange=render;

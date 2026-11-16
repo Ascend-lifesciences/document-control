@@ -220,11 +220,25 @@ $('#cp').onclick=async()=>{
 };
 $('#so').onclick=async()=>{await sb.auth.signOut()};
 
+/* ---------- Grouping: show only the latest version of each document ---------- */
+// "PPA 2024", "PPA 2025" and "PPA 2026" share the name "ppa" once years are ignored, so they form one family.
+// The member with the latest renewal due date is the current version; the others are history.
+const gkey=t=>String(t||'').toLowerCase().replace(/\b(19|20)\d{2}\b/g,' ').replace(/[\s\-_\/\\()\[\],.:;]+/g,' ').trim();
+function groups(){
+ const m=new Map();
+ D.forEach(d=>{const k=gkey(d.title)||String(d.title||'').toLowerCase();if(!m.has(k))m.set(k,[]);m.get(k).push(d)});
+ return [...m.values()].map(g=>{g.sort((a,b)=>b.due.localeCompare(a.due)||String(b.rec).localeCompare(String(a.rec)));return {cur:g[0],older:g.slice(1)}});
+}
+const C=()=>groups().map(g=>g.cur);
+const grpOf=id=>groups().find(g=>g.cur.id===id);
+function histCount(d){const g=grpOf(d.id);return g?g.older.reduce((n,o)=>n+1+(o.history||[]).length,(d.history||[]).length):0}
+function hay(d){const g=grpOf(d.id);return [d].concat(g?g.older:[]).map(x=>[x.title,x.ref,x.auth,x.owner,x.type].join(' ')).join(' ').toLowerCase()}
+
 /* ---------- Rendering ---------- */
 function visible(){
  const q=$('#q').value.toLowerCase(),t=$('#ft').value;
- return D.filter(d=>{
-  if(q&&![d.title,d.ref,d.auth,d.owner,d.type].join(' ').toLowerCase().includes(q))return false;
+ return C().filter(d=>{
+  if(q&&!hay(d).includes(q))return false;
   if(t&&d.type!==t)return false;
   if(flt==='over')return days(d.due)<0;
   if(flt==='valid')return status(d)==='Valid';
@@ -232,33 +246,37 @@ function visible(){
   return true}).sort((a,b)=>a.due.localeCompare(b.due));
 }
 function render(){
- const c=[['all','Total documents',D.length],['over','Overdue',D.filter(d=>days(d.due)<0).length],
-  ['30','Due in 30 days',D.filter(d=>within(d,30)).length],['60','Due in 60 days',D.filter(d=>within(d,60)).length],['90','Due in 90 days',D.filter(d=>within(d,90)).length]];
+ const CU=C();
+ const c=[['all','Total documents',CU.length],['over','Overdue',CU.filter(d=>days(d.due)<0).length],
+  ['30','Due in 30 days',CU.filter(d=>within(d,30)).length],['60','Due in 60 days',CU.filter(d=>within(d,60)).length],['90','Due in 90 days',CU.filter(d=>within(d,90)).length]];
  $('#stats').innerHTML=c.map(x=>`<button class="stat ${flt===x[0]?'on':''} ${x[0]==='over'&&x[2]?'alert':''}" data-f="${x[0]}"><b>${x[2]}</b>${x[1]}</button>`).join('');
  $('#fs').value=flt;
- const types=[...new Set(D.map(d=>d.type))].sort(),cur=$('#ft').value;
+ const types=[...new Set(CU.map(d=>d.type))].sort(),cur=$('#ft').value;
  $('#ft').innerHTML='<option value="">All types</option>'+types.map(t=>`<option ${t===cur?'selected':''}>${esc(t)}</option>`).join('');
- const need=D.filter(d=>status(d)!=='Valid').sort((a,b)=>a.due.localeCompare(b.due));
+ const need=CU.filter(d=>status(d)!=='Valid').sort((a,b)=>a.due.localeCompare(b.due));
  const b=$('#banner');b.hidden=!need.length;
  if(need.length)b.innerHTML=`<b>${need.length} document${need.length>1?'s need':' needs'} attention</b><ul>`+need.map(d=>{const n=days(d.due);return `<li>${esc(d.title)}: ${n<0?`overdue by ${-n} day${n<-1?'s':''}`:n===0?'due today':`due in ${n} day${n>1?'s':''}`} (${fmt(d.due)})</li>`}).join('')+'</ul>';
  const v=visible();
- $('#tb').innerHTML=v.length?v.map(d=>{const n=days(d.due),s=status(d);
-  return `<tr><td><b>${esc(d.title)}</b><small>${[d.ref,d.auth,d.owner].filter(Boolean).map(esc).join(' | ')}</small>${d.loc?`<small>File: ${esc(d.loc)}</small>`:''}${d.history&&d.history.length?`<small>Renewed ${d.history.length} time${d.history.length>1?'s':''}</small>`:''}</td>
+ $('#tb').innerHTML=v.length?v.map(d=>{const n=days(d.due),s=status(d),hc=histCount(d);
+  return `<tr><td><b>${esc(d.title)}</b><small>${[d.ref,d.auth,d.owner].filter(Boolean).map(esc).join(' | ')}</small>${d.loc?`<small>File: ${esc(d.loc)}</small>`:''}${hc?`<small>${hc} earlier version${hc>1?'s':''} in history</small>`:''}</td>
   <td>${esc(d.type)}</td><td>${fmt(d.rec)}</td><td>${fmt(d.due)}</td><td>${n<0?(-n)+' overdue':n}</td>
   <td><span class="tag ${s.split(' ')[0]}">${s}</span></td>
-  <td class="act">${d.history&&d.history.length?`<button class="sm" data-a="hist" data-i="${d.id}">History</button> `:''}<button class="sm" data-a="ren" data-i="${d.id}">Renew</button> <button class="sm" data-a="edit" data-i="${d.id}">Edit</button> <button class="sm" data-a="del" data-i="${d.id}">Delete</button></td></tr>`}).join('')
-  :`<tr><td colspan="7" class="empty">${D.length?'No documents match this filter.':'No documents yet. Select "Add document" to register your first one.'}</td></tr>`;
+  <td class="act">${hc?`<button class="sm" data-a="hist" data-i="${d.id}">History</button> `:''}<button class="sm" data-a="ren" data-i="${d.id}">Renew</button> <button class="sm" data-a="edit" data-i="${d.id}">Edit</button> <button class="sm" data-a="del" data-i="${d.id}">Delete</button></td></tr>`}).join('')
+  :`<tr><td colspan="7" class="empty">${CU.length?'No documents match this filter.':'No documents yet. Select "Add document" to register your first one.'}</td></tr>`;
 }
 
 /* ---------- Add / edit / renew / delete ---------- */
 const F=['title','type','ref','auth','owner','rec','due','lead','emails','loc','notes'];
 function openHistory(id){
- const d=D.find(x=>x.id===id);if(!d)return;
- $('#ht').textContent='Renewal history: '+d.title;
- const past=[...(d.history||[])].reverse();
- const rows=`<tr><td><b>Current</b></td><td>${fmt(d.rec)}</td><td>${fmt(d.due)}</td><td>-</td></tr>`+
-  past.map(x=>`<tr><td>Previous</td><td>${fmt(x.rec)}</td><td>${fmt(x.due)}</td><td>${fmt(x.on)}</td></tr>`).join('');
- $('#hb').innerHTML=`<table class="ht"><thead><tr><th>Version</th><th>Received</th><th>Expiry date</th><th>Renewed on</th></tr></thead><tbody>${rows}</tbody></table>`;
+ const g=grpOf(id);if(!g)return;const d=g.cur;
+ $('#ht').textContent='History: '+d.title;
+ const e=[];
+ (d.history||[]).forEach(x=>e.push({t:d.title,rec:x.rec,due:x.due,on:x.on}));
+ g.older.forEach(o=>{e.push({t:o.title,rec:o.rec,due:o.due,on:''});(o.history||[]).forEach(x=>e.push({t:o.title,rec:x.rec,due:x.due,on:x.on}))});
+ e.sort((a,b)=>b.due.localeCompare(a.due));
+ const rows=`<tr><td><b>${esc(d.title)}</b> (current)</td><td>${fmt(d.rec)}</td><td>${fmt(d.due)}</td><td>-</td></tr>`+
+  e.map(x=>`<tr><td>${esc(x.t)}</td><td>${fmt(x.rec)}</td><td>${fmt(x.due)}</td><td>${x.on?fmt(x.on):'-'}</td></tr>`).join('');
+ $('#hb').innerHTML=`<table class="ht"><thead><tr><th>Document</th><th>Received</th><th>Expiry date</th><th>Renewed on</th></tr></thead><tbody>${rows}</tbody></table>`;
  $('#hd').showModal();
 }
 function openForm(id){
@@ -295,15 +313,15 @@ $('#q').oninput=render;$('#ft').onchange=render;
 /* ---------- Exports, backup, notifications ---------- */
 function dl(name,text,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500)}
 $('#csv').onclick=()=>{
- const h=['Title','Type','Reference','Authority','Owner','Received','Renewal due','Remind days before','Status','File location','Notes'];
+ const cid=new Set(C().map(x=>x.id));const h=['Title','Type','Reference','Authority','Owner','Received','Renewal due','Remind days before','Status','File location','Notes','Current version'];
  const q=s=>'"'+String(s==null?'':s).replace(/"/g,'""')+'"';
- dl('regulatory_documents.csv',[h.map(q).join(',')].concat(D.map(d=>[d.title,d.type,d.ref,d.auth,d.owner,d.rec,d.due,d.lead,status(d),d.loc,d.notes].map(q).join(','))).join('\r\n'),'text/csv');
+ dl('regulatory_documents.csv',[h.map(q).join(',')].concat(D.map(d=>[d.title,d.type,d.ref,d.auth,d.owner,d.rec,d.due,d.lead,status(d),d.loc,d.notes,cid.has(d.id)?'Yes':'No'].map(q).join(','))).join('\r\n'),'text/csv');
 };
 $('#ics').onclick=()=>{
  if(!D.length)return alert('Add a document first.');
  const p=s=>s.replace(/-/g,''),nx=s=>{const d=new Date(s+'T00:00:00');d.setDate(d.getDate()+1);return p(iso(d))};
  const t=s=>String(s||'').replace(/[\\;,]/g,m=>'\\'+m).replace(/\n/g,'\\n');
- const ev=D.map(d=>['BEGIN:VEVENT','UID:'+d.id+'@regdocs','DTSTAMP:'+new Date().toISOString().replace(/[-:]|\.\d+/g,''),
+ const ev=C().map(d=>['BEGIN:VEVENT','UID:'+d.id+'@regdocs','DTSTAMP:'+new Date().toISOString().replace(/[-:]|\.\d+/g,''),
   'DTSTART;VALUE=DATE:'+p(d.due),'DTEND;VALUE=DATE:'+nx(d.due),'SUMMARY:'+t('Renewal due: '+d.title),
   'DESCRIPTION:'+t([d.type,d.ref,d.auth].filter(Boolean).join(' | ')),
   'BEGIN:VALARM','TRIGGER:-P'+d.lead+'D','ACTION:DISPLAY','DESCRIPTION:'+t('Renewal due soon: '+d.title),'END:VALARM','END:VEVENT'].join('\r\n'));
@@ -321,7 +339,7 @@ $('#rf').onchange=e=>{
 };
 // Opens the user's email program with a ready-written reminder (they press Send).
 $('#em').onclick=()=>{
- const need=D.filter(d=>status(d)!=='Valid').sort((a,b)=>a.due.localeCompare(b.due));
+ const need=C().filter(d=>status(d)!=='Valid').sort((a,b)=>a.due.localeCompare(b.due));
  if(!need.length)return alert('No documents are due or overdue right now.');
  const to=[...new Set(need.flatMap(d=>(d.emails||'').split(',').map(x=>x.trim()).filter(Boolean)))];
  const lines=need.map(d=>{const n=days(d.due);
@@ -332,7 +350,7 @@ $('#em').onclick=()=>{
 };
 function notify(){
  if(!('Notification' in window)||Notification.permission!=='granted')return;
- const n=D.filter(d=>status(d)!=='Valid').length;
+ const n=C().filter(d=>status(d)!=='Valid').length;
  if(n)new Notification('Regulatory documents',{body:n+' document(s) are due or overdue for renewal.'});
 }
 $('#nt').onclick=()=>{

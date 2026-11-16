@@ -45,6 +45,7 @@ label input,label textarea{font:inherit;font-weight:400;padding:7px;border:1px s
 .full{grid-column:1/-1}
 .btns{grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end}
 .hist{grid-column:1/-1;font-size:12px;color:#444;border-top:1px solid #ccc;padding-top:8px}
+table.ht{min-width:0}.ht th,.ht td{padding:6px 8px;font-size:13px}
 #login{max-width:420px;margin:12vh auto 0;padding:0 20px}
 #login form{display:flex;flex-direction:column;padding:0;gap:12px;margin-top:16px}
 #lmsg{min-height:1.4em;font-size:13px}
@@ -104,7 +105,6 @@ label input,label textarea{font:inherit;font-weight:400;padding:7px;border:1px s
  <label class="full">Email these people when due (comma-separated)<input id="f_emails" placeholder="boss@company.com, you@company.com"></label>
  <label>File location or link<input id="f_loc"></label>
  <label class="full">Notes<textarea id="f_notes" rows="2"></textarea></label>
- <div class="hist" id="hist" hidden></div>
  <div class="btns"><button type="button" id="cx">Cancel</button><button class="pri" type="submit">Save document</button></div>
 </form></dialog>
 
@@ -113,6 +113,12 @@ label input,label textarea{font:inherit;font-weight:400;padding:7px;border:1px s
  <label>New date received<input type="date" id="r_rec" required></label>
  <label>New renewal due date<input type="date" id="r_due" required></label>
  <div class="btns"><button type="button" id="rcx">Cancel</button><button class="pri" type="submit">Save renewal</button></div>
+</form></dialog>
+
+<dialog id="hd"><form id="hf" method="dialog">
+ <h2 id="ht">Renewal history</h2>
+ <div class="full tw" id="hb"></div>
+ <div class="btns"><button class="pri" type="submit">Close</button></div>
 </form></dialog>
 </main>
 
@@ -237,21 +243,28 @@ function render(){
  if(need.length)b.innerHTML=`<b>${need.length} document${need.length>1?'s need':' needs'} attention</b><ul>`+need.map(d=>{const n=days(d.due);return `<li>${esc(d.title)}: ${n<0?`overdue by ${-n} day${n<-1?'s':''}`:n===0?'due today':`due in ${n} day${n>1?'s':''}`} (${fmt(d.due)})</li>`}).join('')+'</ul>';
  const v=visible();
  $('#tb').innerHTML=v.length?v.map(d=>{const n=days(d.due),s=status(d);
-  return `<tr><td><b>${esc(d.title)}</b><small>${[d.ref,d.auth,d.owner].filter(Boolean).map(esc).join(' | ')}</small>${d.loc?`<small>File: ${esc(d.loc)}</small>`:''}</td>
+  return `<tr><td><b>${esc(d.title)}</b><small>${[d.ref,d.auth,d.owner].filter(Boolean).map(esc).join(' | ')}</small>${d.loc?`<small>File: ${esc(d.loc)}</small>`:''}${d.history&&d.history.length?`<small>Renewed ${d.history.length} time${d.history.length>1?'s':''}</small>`:''}</td>
   <td>${esc(d.type)}</td><td>${fmt(d.rec)}</td><td>${fmt(d.due)}</td><td>${n<0?(-n)+' overdue':n}</td>
   <td><span class="tag ${s.split(' ')[0]}">${s}</span></td>
-  <td class="act"><button class="sm" data-a="ren" data-i="${d.id}">Renew</button> <button class="sm" data-a="edit" data-i="${d.id}">Edit</button> <button class="sm" data-a="del" data-i="${d.id}">Delete</button></td></tr>`}).join('')
+  <td class="act">${d.history&&d.history.length?`<button class="sm" data-a="hist" data-i="${d.id}">History</button> `:''}<button class="sm" data-a="ren" data-i="${d.id}">Renew</button> <button class="sm" data-a="edit" data-i="${d.id}">Edit</button> <button class="sm" data-a="del" data-i="${d.id}">Delete</button></td></tr>`}).join('')
   :`<tr><td colspan="7" class="empty">${D.length?'No documents match this filter.':'No documents yet. Select "Add document" to register your first one.'}</td></tr>`;
 }
 
 /* ---------- Add / edit / renew / delete ---------- */
 const F=['title','type','ref','auth','owner','rec','due','lead','emails','loc','notes'];
+function openHistory(id){
+ const d=D.find(x=>x.id===id);if(!d)return;
+ $('#ht').textContent='Renewal history: '+d.title;
+ const past=[...(d.history||[])].reverse();
+ const rows=`<tr><td><b>Current</b></td><td>${fmt(d.rec)}</td><td>${fmt(d.due)}</td><td>-</td></tr>`+
+  past.map(x=>`<tr><td>Previous</td><td>${fmt(x.rec)}</td><td>${fmt(x.due)}</td><td>${fmt(x.on)}</td></tr>`).join('');
+ $('#hb').innerHTML=`<table class="ht"><thead><tr><th>Version</th><th>Received</th><th>Expiry date</th><th>Renewed on</th></tr></thead><tbody>${rows}</tbody></table>`;
+ $('#hd').showModal();
+}
 function openForm(id){
  editId=id;const d=D.find(x=>x.id===id)||{lead:60,rec:iso(new Date())};
  $('#dt').textContent=id?'Edit document':'Add document';
  F.forEach(k=>$('#f_'+k).value=d[k]==null?'':d[k]);
- const h=$('#hist');h.hidden=!(d.history&&d.history.length);
- if(!h.hidden)h.innerHTML='<b>Renewal history</b><br>'+d.history.map(x=>`Received ${fmt(x.rec)}, was due ${fmt(x.due)}, renewed ${fmt(x.on)}`).join('<br>');
  $('#dm').showModal();
 }
 $('#fm').onsubmit=e=>{
@@ -265,6 +278,7 @@ $('#rcx').onclick=()=>$('#rd').close();
 $('#tb').onclick=e=>{
  const b=e.target.closest('button');if(!b)return;const id=b.dataset.i,d=D.find(x=>x.id===id);
  if(b.dataset.a==='edit')openForm(id);
+ if(b.dataset.a==='hist')openHistory(id);
  if(b.dataset.a==='del'&&confirm(`Delete "${d.title}" and its history?`))removeDoc(id);
  if(b.dataset.a==='ren'){renId=id;$('#rt').textContent='Renew: '+d.title;$('#r_rec').value=iso(new Date());$('#r_due').value='';$('#rd').showModal()}
 };

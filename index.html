@@ -84,7 +84,7 @@ table.ht{min-width:0}.ht th,.ht td{padding:6px 8px;font-size:13px}
  <select id="fs" aria-label="Filter by status">
   <option value="all">All documents</option><option value="over">Overdue</option>
   <option value="30">Due within 30 days</option><option value="60">Due within 60 days</option>
-  <option value="90">Due within 90 days</option><option value="valid">Valid</option></select>
+  <option value="90">Due within 90 days</option><option value="rp">Renewal in progress</option><option value="valid">Valid</option></select>
  <select id="fv" aria-label="Filter by version" hidden><option value="all">All versions</option><option value="cur">Current only</option><option value="prev">Previous only</option></select>
  <select id="ft" aria-label="Filter by type"><option value="">All types</option></select>
  <button class="pri" id="add">Add document</button>
@@ -124,6 +124,14 @@ table.ht{min-width:0}.ht th,.ht td{padding:6px 8px;font-size:13px}
  <div class="btns"><button type="button" id="rcx">Cancel</button><button class="pri" type="submit">Save renewal</button></div>
 </form></dialog>
 
+<dialog id="pd"><form id="pf" method="dialog">
+ <h2 id="pt">Renewal process</h2>
+ <div class="full" id="pb"></div>
+ <label>Document name<input id="p_name" placeholder="e.g. Application receipt"></label>
+ <label>Link<input id="p_link" placeholder="https://..."></label>
+ <div class="btns"><button type="button" id="p_cancel">Cancel renewal process</button><button type="button" id="p_add">Attach document</button><button class="pri" type="submit">Close</button></div>
+</form></dialog>
+
 <dialog id="hd"><form id="hf" method="dialog">
  <h2 id="ht">Renewal history</h2>
  <div class="full tw" id="hb"></div>
@@ -153,6 +161,11 @@ const days=x=>Math.round((new Date(x+'T00:00:00')-midnight())/864e5);
 const status=d=>{const n=days(d.due);return n<0?'Overdue':n<=d.lead?'Due soon':'Valid'};
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmt=x=>x?new Date(x+'T00:00:00').toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'}):'';
+// Maps a login email to a person's name. Edit the keywords if someone's email doesn't match.
+const PEOPLE=[['Michael Amewu',['ascendlifesciences','michael','amewu']],['Racheal Otoo',['racheal','rachael','otoo']]];
+const who=e=>{e=String(e||'').toLowerCase();if(!e)return 'Unknown';const p=PEOPLE.find(x=>x[1].some(k=>e.includes(k)));return p?p[0]:e};
+const byRow=d=>d.by||d.at?`<small>Entered by ${esc(who(d.by))}${d.at?' on '+fmt(String(d.at).slice(0,10)):''}${d.upby?' | Last edited by '+esc(who(d.upby)):''}</small>`:'';
+const rdocLink=r=>/^https?:\/\//i.test(r.l||'')?`<a href="${esc(r.l)}" target="_blank" rel="noopener noreferrer">${esc(r.n)}</a>`:esc(r.n);
 const linkify=u=>/^https?:\/\//i.test(u)?`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">Open link</a>`:esc(u);
 const linkRow=d=>d.loc?`<small>File: ${linkify(d.loc)}</small>`:'';
 const within=(d,n)=>{const k=days(d.due);return k>=0&&k<=n};
@@ -160,9 +173,10 @@ const within=(d,n)=>{const k=days(d.due);return k>=0&&k<=n};
 /* ---------- Supabase data layer ---------- */
 // The app uses short field names; the table uses descriptive column names.
 const fromRow=r=>({id:r.id,title:r.title,type:r.type,ref:r.reference||'',auth:r.authority||'',
- owner:r.owner||'',rec:r.received,due:r.due,lead:r.lead_days,loc:r.location||'',emails:r.notify_emails||'',notes:r.notes||'',history:r.history||[]});
+ owner:r.owner||'',rec:r.received,due:r.due,lead:r.lead_days,loc:r.location||'',emails:r.notify_emails||'',notes:r.notes||'',history:r.history||[],
+ rs:r.renewal_started||'',rdocs:r.renewal_docs||[],by:r.entered_by_email||'',at:r.created_at||'',upby:r.updated_by_email||''});
 const toRow=d=>({title:d.title,type:d.type,reference:d.ref||null,authority:d.auth||null,owner:d.owner||null,
- received:d.rec,due:d.due,lead_days:+d.lead||60,location:d.loc||null,notify_emails:d.emails||null,notes:d.notes||null,history:d.history||[]});
+ received:d.rec,due:d.due,lead_days:+d.lead||60,location:d.loc||null,notify_emails:d.emails||null,notes:d.notes||null,history:d.history||[],renewal_started:d.rs||null,renewal_docs:d.rdocs||[]});
 
 // Older renewals used to be stored inside a document. Turn them into normal records so they can be edited and deleted.
 async function convertOldHistory(rows){
@@ -210,7 +224,7 @@ function offerLocalImport(){
 function setSession(s){
  const prev=user;user=s?s.user:null;
  $('#login').hidden=!!user;$('#app').hidden=!user;
- if(user){$('#who').textContent=user.email||'';if(!prev||prev.id!==user.id)load()}
+ if(user){$('#who').textContent='Signed in: '+who(user.email);if(!prev||prev.id!==user.id)load()}
  else{D=[];}
 }
 async function initAuth(){
@@ -260,6 +274,7 @@ function visible(){
  return C().filter(d=>{
   if(q&&!hay(d).includes(q))return false;
   if(t&&d.type!==t)return false;
+  if(flt==='rp')return !!d.rs;
   if(flt==='over')return days(d.due)<0;
   if(flt==='valid')return status(d)==='Valid';
   if(flt!=='all')return within(d,+flt);
@@ -275,17 +290,17 @@ function render(){
  $('#ft').innerHTML='<option value="">All types</option>'+types.map(t=>`<option ${t===cur?'selected':''}>${esc(t)}</option>`).join('');
  const need=CU.filter(d=>status(d)!=='Valid').sort((a,b)=>a.due.localeCompare(b.due));
  const b=$('#banner');b.hidden=!need.length;
- if(need.length)b.innerHTML=`<b>${need.length} document${need.length>1?'s need':' needs'} attention</b><ul>`+need.map(d=>{const n=days(d.due);return `<li>${esc(d.title)}: ${n<0?`overdue by ${-n} day${n<-1?'s':''}`:n===0?'due today':`due in ${n} day${n>1?'s':''}`} (${fmt(d.due)})</li>`}).join('')+'</ul>';
+ if(need.length)b.innerHTML=`<b>${need.length} document${need.length>1?'s need':' needs'} attention</b><ul>`+need.map(d=>{const n=days(d.due);return `<li>${esc(d.title)}: ${n<0?`overdue by ${-n} day${n<-1?'s':''}`:n===0?'due today':`due in ${n} day${n>1?'s':''}`} (${fmt(d.due)})${d.rs?' - renewal in progress':''}</li>`}).join('')+'</ul>';
  $('#stats').hidden=tab==='all';$('#fs').hidden=tab==='all';$('#fv').hidden=tab!=='all';
  document.querySelectorAll('#tabs button').forEach(b=>{const on=b.dataset.t===tab;b.classList.toggle('on',on);b.setAttribute('aria-selected',on)});
  if(tab==='all'){$('#banner').hidden=true;return renderAll(CU)}
  $('#th').innerHTML='<tr><th>Document</th><th>Type</th><th>Received</th><th>Renewal due</th><th>Days left</th><th>Status</th><th></th></tr>';
  const v=visible();
  $('#tb').innerHTML=v.length?v.map(d=>{const n=days(d.due),s=status(d),hc=histCount(d);
-  return `<tr><td><b>${esc(d.title)}</b><small>${[d.ref,d.auth,d.owner].filter(Boolean).map(esc).join(' | ')}</small>${linkRow(d)}${hc?`<small>${hc} earlier version${hc>1?'s':''} in history</small>`:''}</td>
+  return `<tr><td><b>${esc(d.title)}</b><small>${[d.ref,d.auth,d.owner].filter(Boolean).map(esc).join(' | ')}</small>${linkRow(d)}${byRow(d)}${hc?`<small>${hc} earlier version${hc>1?'s':''} in history</small>`:''}</td>
   <td>${esc(d.type)}</td><td>${fmt(d.rec)}</td><td>${fmt(d.due)}</td><td>${n<0?(-n)+' overdue':n}</td>
-  <td><span class="tag ${s.split(' ')[0]}">${s}</span></td>
-  <td class="act">${hc?`<button class="sm" data-a="hist" data-i="${d.id}">History</button> `:''}<button class="sm" data-a="ren" data-i="${d.id}">Renew</button> <button class="sm" data-a="edit" data-i="${d.id}">Edit</button> <button class="sm" data-a="del" data-i="${d.id}">Delete</button></td></tr>`}).join('')
+  <td><span class="tag ${s.split(' ')[0]}">${s}</span>${d.rs?`<small>Renewal in progress since ${fmt(d.rs)}</small>`:''}</td>
+  <td class="act">${d.rs?`<button class="sm" data-a="rdocs" data-i="${d.id}">Renewal docs</button> `:s!=='Valid'?`<button class="sm" data-a="rstart" data-i="${d.id}">Renewal process started</button> `:''}${hc?`<button class="sm" data-a="hist" data-i="${d.id}">History</button> `:''}<button class="sm" data-a="ren" data-i="${d.id}">Renew</button> <button class="sm" data-a="edit" data-i="${d.id}">Edit</button> <button class="sm" data-a="del" data-i="${d.id}">Delete</button></td></tr>`}).join('')
   :`<tr><td colspan="7" class="empty">${CU.length?'No documents match this filter.':'No documents yet. Select "Add document" to register your first one.'}</td></tr>`;
 }
 
@@ -295,7 +310,7 @@ function renderAll(CU){
  const A=D.filter(d=>(!q||[d.title,d.ref,d.auth,d.owner,d.type].join(' ').toLowerCase().includes(q))&&(!t||d.type===t)&&(fv==='all'||(fv==='cur')===cid.has(d.id)))
   .sort((a,b)=>(gkey(a.title)||a.title).localeCompare(gkey(b.title)||b.title)||b.due.localeCompare(a.due));
  $('#tb').innerHTML=A.length?A.map(d=>{const c=cid.has(d.id);
-  return `<tr><td><b>${esc(d.title)}</b><small>${[d.ref,d.auth,d.owner].filter(Boolean).map(esc).join(' | ')}</small>${linkRow(d)}</td>
+  return `<tr><td><b>${esc(d.title)}</b><small>${[d.ref,d.auth,d.owner].filter(Boolean).map(esc).join(' | ')}</small>${linkRow(d)}${byRow(d)}</td>
   <td>${esc(d.type)}</td><td>${fmt(d.rec)}</td><td>${fmt(d.due)}</td>
   <td><span class="tag ${c?'Due':'Valid'}">${c?'Current':'Previous'}</span></td>
   <td class="act"><button class="sm" data-a="rename" data-i="${d.id}">Rename</button> <button class="sm" data-a="edit" data-i="${d.id}">Edit</button> <button class="sm" data-a="del" data-i="${d.id}">Delete</button></td></tr>`}).join('')
@@ -313,10 +328,33 @@ const F=['title','type','ref','auth','owner','rec','due','lead','emails','loc','
 function openHistory(id){
  const g=grpOf(id);if(!g)return;const d=g.cur;
  $('#ht').textContent='History: '+d.title;
- const row=(x,tag)=>`<tr><td>${tag?'<b>'+esc(x.title)+'</b> (current)':esc(x.title)}</td><td>${fmt(x.rec)}</td><td>${fmt(x.due)}</td><td>${x.loc?linkify(x.loc):'-'}</td></tr>`;
+ const row=(x,tag)=>`<tr><td>${tag?'<b>'+esc(x.title)+'</b> (current)':esc(x.title)}${byRow(x)}</td><td>${fmt(x.rec)}</td><td>${fmt(x.due)}</td><td>${x.loc?linkify(x.loc):'-'}${(x.rdocs||[]).map(r=>'<small>Renewal: '+rdocLink(r)+'</small>').join('')}</td></tr>`;
  $('#hb').innerHTML=`<table class="ht"><thead><tr><th>Document</th><th>Received</th><th>Expiry date</th><th>File</th></tr></thead><tbody>${row(d,1)}${g.older.map(o=>row(o,0)).join('')}</tbody></table><p class="note">To rename, edit or delete a version, use the All documents tab.</p>`;
  $('#hd').showModal();
 }
+let pid=null;
+function openRenewal(id){
+ const d=D.find(x=>x.id===id);if(!d)return;pid=id;
+ $('#pt').textContent='Renewal process: '+d.title;
+ $('#pb').innerHTML=`<p>Renewal started on <b>${fmt(d.rs)}</b>. Current expiry date: ${fmt(d.due)}.</p>`+
+  (d.rdocs.length?`<ul>${d.rdocs.map((r,i)=>`<li>${rdocLink(r)} <small>(added by ${esc(who(r.by))} on ${fmt(r.on)})</small> <button type="button" class="sm" data-ri="${i}">Remove</button></li>`).join('')}</ul>`:'<p class="note">No renewal documents attached yet.</p>');
+ $('#p_name').value='';$('#p_link').value='';
+ if(!$('#pd').open)$('#pd').showModal();
+}
+$('#p_add').onclick=async()=>{
+ const d=D.find(x=>x.id===pid),n=$('#p_name').value.trim(),l=$('#p_link').value.trim();
+ if(!n)return alert('Enter a name for the document.');
+ if(l&&!/^https?:\/\//i.test(l))return alert('The link must start with http:// or https://');
+ if(await upsertDoc({...d,rdocs:[...d.rdocs,{n,l,by:user.email,on:iso(new Date())}]}))openRenewal(pid);
+};
+$('#pb').onclick=async e=>{
+ const b=e.target.closest('button[data-ri]');if(!b)return;const d=D.find(x=>x.id===pid);
+ if(confirm('Remove this renewal document?')&&await upsertDoc({...d,rdocs:d.rdocs.filter((_,i)=>i!==+b.dataset.ri)}))openRenewal(pid);
+};
+$('#p_cancel').onclick=async()=>{
+ const d=D.find(x=>x.id===pid);
+ if(confirm('Cancel the renewal process for "'+d.title+'"? The attached renewal documents will be removed.')){await upsertDoc({...d,rs:'',rdocs:[]});$('#pd').close()}
+};
 function openForm(id){
  editId=id;const d=D.find(x=>x.id===id)||{lead:60,rec:iso(new Date())};
  $('#dt').textContent=id?'Edit document':'Add document';
@@ -335,13 +373,15 @@ $('#tb').onclick=e=>{
  const b=e.target.closest('button');if(!b)return;const id=b.dataset.i,d=D.find(x=>x.id===id);
  if(b.dataset.a==='edit')openForm(id);
  if(b.dataset.a==='rename')renameDoc(id);
+ if(b.dataset.a==='rdocs')openRenewal(id);
+ if(b.dataset.a==='rstart'&&confirm('Mark the renewal process as started for "'+d.title+'"?'))upsertDoc({...d,rs:iso(new Date())}).then(ok=>ok&&openRenewal(id));
  if(b.dataset.a==='hist')openHistory(id);
  if(b.dataset.a==='del'&&confirm(`Delete "${d.title}" (${fmt(d.rec)} to ${fmt(d.due)})? This cannot be undone.`))removeDoc(id);
  if(b.dataset.a==='ren'){renId=id;$('#rt').textContent='Renew: '+d.title;$('#r_title').value=d.title;$('#r_loc').value='';$('#r_rec').value=iso(new Date());$('#r_due').value='';$('#rd').showModal()}
 };
 $('#rf2').onsubmit=()=>{
  const d=D.find(x=>x.id===renId);
- upsertDoc({...d,id:undefined,title:$('#r_title').value.trim()||d.title,rec:$('#r_rec').value,due:$('#r_due').value,loc:$('#r_loc').value.trim(),history:[]});
+ upsertDoc({...d,id:undefined,title:$('#r_title').value.trim()||d.title,rec:$('#r_rec').value,due:$('#r_due').value,loc:$('#r_loc').value.trim(),history:[],rs:'',rdocs:[]});
 };
 $('#tabs').onclick=e=>{const b=e.target.closest('button');if(b){tab=b.dataset.t;render()}};
 $('#fv').onchange=render;
@@ -352,9 +392,9 @@ $('#q').oninput=render;$('#ft').onchange=render;
 /* ---------- Exports, backup, notifications ---------- */
 function dl(name,text,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500)}
 $('#csv').onclick=()=>{
- const cid=new Set(C().map(x=>x.id));const h=['Title','Type','Reference','Authority','Owner','Received','Renewal due','Remind days before','Status','File location','Notes','Current version'];
+ const cid=new Set(C().map(x=>x.id));const h=['Title','Type','Reference','Authority','Owner','Received','Renewal due','Remind days before','Status','File location','Notes','Current version','Entered by','Renewal started'];
  const q=s=>'"'+String(s==null?'':s).replace(/"/g,'""')+'"';
- dl('regulatory_documents.csv',[h.map(q).join(',')].concat(D.map(d=>[d.title,d.type,d.ref,d.auth,d.owner,d.rec,d.due,d.lead,status(d),d.loc,d.notes,cid.has(d.id)?'Yes':'No'].map(q).join(','))).join('\r\n'),'text/csv');
+ dl('regulatory_documents.csv',[h.map(q).join(',')].concat(D.map(d=>[d.title,d.type,d.ref,d.auth,d.owner,d.rec,d.due,d.lead,status(d),d.loc,d.notes,cid.has(d.id)?'Yes':'No',who(d.by),d.rs].map(q).join(','))).join('\r\n'),'text/csv');
 };
 $('#ics').onclick=()=>{
  if(!D.length)return alert('Add a document first.');
